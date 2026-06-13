@@ -1,0 +1,9 @@
+{
+  "name": "WebP to GIF",
+  "short_name": "WebP to GIF",
+  "display": "standalone",
+  "background_color": "#f4efe4",
+  "theme_color": "#f4efe4",
+  "start_url": "./index.html",
+  "icons": []
+}
