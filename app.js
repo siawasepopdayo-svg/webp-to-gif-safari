@@ -1,4 +1,4 @@
-import { rgbaToGifBlob } from "./gif.js";
+import { convertAnimatedWebPToGif, isAnimatedWebP, rgbaToGifBlob } from "./gif.js";
 
 const fileInput = document.querySelector("#file-input");
 const convertButton = document.querySelector("#convert-button");
@@ -148,6 +148,12 @@ async function convertAll() {
 }
 
 async function convertWebPToGif(file, onProgress) {
+  const arrayBuffer = await file.arrayBuffer();
+  if (isAnimatedWebP(arrayBuffer)) {
+    onProgress(0.02, "アニメーションを解析しています");
+    return convertAnimatedWebPToGif(arrayBuffer, onProgress);
+  }
+
   onProgress(0.08, "画像を開いています");
   const bitmap = await loadBitmap(file);
   await nextFrame();
