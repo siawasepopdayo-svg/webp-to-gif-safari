@@ -51,6 +51,14 @@ export function parseWebPStructure(arrayBuffer) {
 }
 
 export async function convertAnimatedWebPToGif(arrayBuffer, onProgress = () => {}) {
+  if (typeof ImageDecoder !== "undefined") {
+    try {
+      return await convertAnimatedWebPWithImageDecoder(arrayBuffer, onProgress);
+    } catch {
+      // Fall back to the container parser when WebCodecs is unavailable or decoding fails.
+    }
+  }
+
   const structure = parseWebPStructure(arrayBuffer);
   if (!structure.frames.length) {
     throw new Error("アニメーション WebP のフレームが見つかりませんでした。");
@@ -99,6 +107,67 @@ export async function convertAnimatedWebPToGif(arrayBuffer, onProgress = () => {
       onProgress(0.48 + progress * 0.52, label);
     }
   );
+
+  onProgress(1, "完成しました");
+  return new Blob([gifBytes], { type: "image/gif" });
+}
+
+async function convertAnimatedWebPWithImageDecoder(arrayBuffer, onProgress) {
+  const data = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
+  const decoder = new ImageDecoder({ data, type: "image/webp" });
+  await decoder.tracks.ready;
+
+  const track = decoder.tracks.selectedTrack;
+  const frameCount = track?.frameCount ?? 0;
+  if (!frameCount) {
+    throw new Error("ImageDecoder でフレーム情報を取得できませんでした。");
+  }
+
+  onProgress(0.04, `フレーム 1/${frameCount} を読み込んでいます`);
+  const firstResult = await decoder.decode({ frameIndex: 0, completeFramesOnly: true });
+  const firstFrame = firstResult.image;
+  const width = firstFrame.displayWidth || firstFrame.codedWidth;
+  const height = firstFrame.displayHeight || firstFrame.codedHeight;
+
+  if (!width || !height) {
+    if (typeof firstFrame.close === "function") {
+      firstFrame.close();
+    }
+    throw new Error("ImageDecoder で画像サイズを取得できませんでした。");
+  }
+
+  const canvas = createCanvas(width, height);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const snapshots = [];
+
+  for (let index = 0; index < frameCount; index += 1) {
+    onProgress(0.04 + (index / frameCount) * 0.36, `フレーム ${index + 1}/${frameCount} を読み込んでいます`);
+    const frame = index === 0
+      ? firstFrame
+      : (await decoder.decode({ frameIndex: index, completeFramesOnly: true })).image;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(frame, 0, 0, width, height);
+
+    snapshots.push({
+      imageData: context.getImageData(0, 0, width, height),
+      duration: microsecondsToMilliseconds(frame.duration)
+    });
+
+    if (typeof frame.close === "function") {
+      frame.close();
+    }
+
+    await nextFrame();
+  }
+
+  if (typeof decoder.close === "function") {
+    decoder.close();
+  }
+
+  const loopCount = normalizeLoopCount(track?.repetitionCount);
+  const gifBytes = await rgbaFramesToGifBytes(snapshots, width, height, loopCount, (progress, label) => {
+    onProgress(0.4 + progress * 0.6, label);
+  });
 
   onProgress(1, "完成しました");
   return new Blob([gifBytes], { type: "image/gif" });
@@ -467,6 +536,22 @@ function createCanvas(width, height) {
 
 function millisecondsToGifDelay(duration) {
   return Math.max(2, Math.round(duration / 10));
+}
+
+function microsecondsToMilliseconds(duration) {
+  if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) {
+    return 100;
+  }
+
+  return Math.max(20, Math.round(duration / 1000));
+}
+
+function normalizeLoopCount(repetitionCount) {
+  if (typeof repetitionCount !== "number" || repetitionCount < 0 || !Number.isFinite(repetitionCount)) {
+    return 0;
+  }
+
+  return repetitionCount;
 }
 
 function writeLoopingExtension(stream, loopCount) {
